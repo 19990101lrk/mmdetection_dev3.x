@@ -17,9 +17,14 @@ from .ssd_neck import SSDNeck
 from .ssh import SSH
 from .yolo_neck import YOLOV3Neck
 from .yolox_pafpn import YOLOXPAFPN
+from .ext.fusion_fpn_v1 import FusionFPNV1
+from .ext.fusion_fpn import FusionFPN
+from .ext.fusion_fpn_v2 import FusionFPNV2
+from .ext.my_fpn import MyFPN
 
 __all__ = [
     'FPN', 'BFP', 'ChannelMapper', 'HRFPN', 'NASFPN', 'FPN_CARAFE', 'PAFPN',
     'NASFCOS_FPN', 'RFP', 'YOLOV3Neck', 'FPG', 'DilatedEncoder',
     'CTResNetNeck', 'SSDNeck', 'YOLOXPAFPN', 'DyHead', 'CSPNeXtPAFPN', 'SSH'
+    , 'FusionFPNV1', 'FusionFPNV2', 'FusionFPN', 'MyFPN'
 ]

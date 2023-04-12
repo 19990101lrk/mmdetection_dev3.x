@@ -1,19 +1,24 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 from typing import List, Tuple, Union
 
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from mmcv.cnn import ConvModule
-from mmengine.model import BaseModule
+from mmcv.cnn import ConvModule, build_upsample_layer
+from mmengine.model import BaseModule, xavier_init
 from torch import Tensor
-
+from mmcv.ops.carafe import CARAFEPack
 from mmdet.registry import MODELS
 from mmdet.utils import ConfigType, MultiConfig, OptConfigType
 
 
 @MODELS.register_module()
-class FPN(BaseModule):
+class FusionFPNV1(BaseModule):
     r"""Feature Pyramid Network.
+
+    上次采样使用 cafare
+    使用上一层对下一层的语义指导
+
 
     This is an implementation of paper `Feature Pyramid Networks for Object
     Detection <https://arxiv.org/abs/1612.03144>`_.
@@ -68,21 +73,21 @@ class FPN(BaseModule):
     """
 
     def __init__(
-        self,
-        in_channels: List[int],
-        out_channels: int,
-        num_outs: int,
-        start_level: int = 0,
-        end_level: int = -1,
-        add_extra_convs: Union[bool, str] = False,
-        relu_before_extra_convs: bool = False,
-        no_norm_on_lateral: bool = False,
-        conv_cfg: OptConfigType = None,
-        norm_cfg: OptConfigType = None,
-        act_cfg: OptConfigType = None,
-        upsample_cfg: ConfigType = dict(mode='nearest'),
-        init_cfg: MultiConfig = dict(
-            type='Xavier', layer='Conv2d', distribution='uniform')
+            self,
+            in_channels: List[int],
+            out_channels: int,
+            num_outs: int,
+            start_level: int = 0,
+            end_level: int = -1,
+            add_extra_convs: Union[bool, str] = False,
+            relu_before_extra_convs: bool = False,
+            no_norm_on_lateral: bool = False,
+            conv_cfg: OptConfigType = None,
+            norm_cfg: OptConfigType = None,
+            act_cfg: OptConfigType = None,
+            upsample_cfg: ConfigType = dict(mode='nearest'),
+            init_cfg: MultiConfig = dict(
+                type='Xavier', layer='Conv2d', distribution='uniform')
     ) -> None:
         super().__init__(init_cfg=init_cfg)
         assert isinstance(in_channels, list)
@@ -94,6 +99,7 @@ class FPN(BaseModule):
         self.no_norm_on_lateral = no_norm_on_lateral
         self.fp16_enabled = False
         self.upsample_cfg = upsample_cfg.copy()
+        self.upsample = self.upsample_cfg.get('type')
 
         if end_level == -1 or end_level == self.num_ins - 1:
             self.backbone_end_level = self.num_ins
@@ -113,8 +119,16 @@ class FPN(BaseModule):
         elif add_extra_convs:  # True
             self.add_extra_convs = 'on_input'
 
+        # -------------- ----------------------------------------------- #
+        self.global_max_pool = nn.AdaptiveMaxPool2d((1, 1))
+        self.global_avg_pool = nn.AdaptiveAvgPool2d((1, 1))
+        self.relu = nn.ReLU(inplace=True)
+        self.sigmoid = nn.Sigmoid()
+
+
         self.lateral_convs = nn.ModuleList()
         self.fpn_convs = nn.ModuleList()
+        self.upsample_modules = nn.ModuleList()
 
         for i in range(self.start_level, self.backbone_end_level):
             l_conv = ConvModule(
@@ -134,6 +148,11 @@ class FPN(BaseModule):
                 norm_cfg=norm_cfg,
                 act_cfg=act_cfg,
                 inplace=False)
+            if i != self.backbone_end_level - 1:
+                upsample_cfg_ = self.upsample_cfg.copy()
+                upsample_cfg_.update(channels=out_channels, scale_factor=2)
+                upsample_module = build_upsample_layer(upsample_cfg_)
+                self.upsample_modules.append(upsample_module)
 
             self.lateral_convs.append(l_conv)
             self.fpn_convs.append(fpn_conv)
@@ -158,6 +177,44 @@ class FPN(BaseModule):
                     inplace=False)
                 self.fpn_convs.append(extra_fpn_conv)
 
+    def init_weights(self):
+        """Initialize the weights of module."""
+        super(FusionFPNV1, self).init_weights()
+        for m in self.modules():
+            if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d)):
+                xavier_init(m, distribution='uniform')
+        for m in self.modules():
+            if isinstance(m, CARAFEPack):
+                m.init_weights()
+
+    def slice_as(self, src, dst):
+        """Slice ``src`` as ``dst``
+
+        Note:
+            ``src`` should have the same or larger size than ``dst``.
+
+        Args:
+            src (torch.Tensor): Tensors to be sliced.
+            dst (torch.Tensor): ``src`` will be sliced to have the same
+                size as ``dst``.
+
+        Returns:
+            torch.Tensor: Sliced tensor.
+        """
+        assert (src.size(2) >= dst.size(2)) and (src.size(3) >= dst.size(3))
+        if src.size(2) == dst.size(2) and src.size(3) == dst.size(3):
+            return src
+        else:
+            return src[:, :, :dst.size(2), :dst.size(3)]
+
+    def tensor_add(self, a, b):
+        """Add tensors ``a`` and ``b`` that might have different sizes."""
+        if a.size() == b.size():
+            c = a + b
+        else:
+            c = a + self.slice_as(b, a)
+        return c
+
     def forward(self, inputs: Tuple[Tensor]) -> tuple:
         """Forward function.
 
@@ -181,14 +238,32 @@ class FPN(BaseModule):
         for i in range(used_backbone_levels - 1, 0, -1):
             # In some cases, fixing `scale factor` (e.g. 2) is preferred, but
             #  it cannot co-exist with `size` in `F.interpolate`.
-            if 'scale_factor' in self.upsample_cfg:
-                # fix runtime error of "+=" inplace operation in PyTorch 1.10
-                laterals[i - 1] = laterals[i - 1] + F.interpolate(
-                    laterals[i], **self.upsample_cfg)
-            else:
-                prev_shape = laterals[i - 1].shape[2:]
-                laterals[i - 1] = laterals[i - 1] + F.interpolate(
-                    laterals[i], size=prev_shape, **self.upsample_cfg)
+            # if 'scale_factor' in self.upsample_cfg:
+            #     # fix runtime error of "+=" inplace operation in PyTorch 1.10
+            #
+            #     x_max_pool = self.global_max_pool(laterals[i])
+            #     x_avg_pool = self.global_avg_pool(laterals[i])
+            #     x = torch.add(x_max_pool, x_avg_pool)
+            #     x = self.relu(x)
+            #     weight = self.sigmoid(x)
+            #     laterals[i - 1] = laterals[i - 1] * weight + F.interpolate(
+            #         laterals[i], **self.upsample_cfg)
+            # else:
+            #     prev_shape = laterals[i - 1].shape[2:]
+            #     laterals[i - 1] = laterals[i - 1] + F.interpolate(
+            #         laterals[i], size=prev_shape, **self.upsample_cfg)
+
+            # 上一层特征经过 GavgPool 和 GmaxPool 后相加然后与下一层特征进行相乘，再与上采样后的特征现加
+
+            x_max_pool = self.global_max_pool(laterals[i])
+            x_avg_pool = self.global_avg_pool(laterals[i])
+            x = torch.add(x_max_pool, x_avg_pool)
+            # x = self.relu(x)
+            weight = self.sigmoid(x)
+
+
+            upsample_feat = self.upsample_modules[i - 1](laterals[i])
+            laterals[i - 1] = self.tensor_add(laterals[i - 1] * weight, upsample_feat)
 
         # build outputs
         # part 1: from original levels
@@ -218,40 +293,4 @@ class FPN(BaseModule):
                         outs.append(self.fpn_convs[i](F.relu(outs[-1])))
                     else:
                         outs.append(self.fpn_convs[i](outs[-1]))
-
-        # ----------------------------------- 输出特征图 ------------------------------------ #
-
-        # 输出特征图
-        # import matplotlib.pyplot as plt
-        # import numpy as np
-        # import torch
-        # top = 12
-        # for j, out in enumerate(outs):
-        #     # [b,c,h,w] --> [c,h,w],从GPU转到CPU
-        #     im = np.squeeze(out.cpu().detach().numpy())
-        #
-        #     c,h,w = im.shape
-        #
-        #     topk = min(c, top)
-        #     sum_channel_featmap = torch.sum(Tensor(im), dim=(1, 2))
-        #     _, indices = torch.topk(sum_channel_featmap, topk)
-        #     im = im[indices]
-        #
-        #     # [c,h,w] --> [h,w,c]
-        #     im = np.transpose(im, [1, 2, 0])
-        #     plt.figure()
-        #     # 前12个特征图
-        #     for i in range(top):
-        #         ax = plt.subplot(3, 4, i + 1)
-        #         plt.imshow(im[:, :, i] * 255, cmap='gray')
-        #         ax.tick_params(axis='both', which='both', length=0)  # 设置坐标轴数值不可见
-        #         ax.axes.xaxis.set_visible(False)
-        #         ax.axes.yaxis.set_visible(False)
-        #     plt.axis('off')
-        #     plt.savefig(f"E:/lrk/trail/logs/SAR/SSDD/feature_map/baseline/baseline_out_{j}.svg", format='svg', dpi=600, bbox_inches='tight')
-        #     plt.show()
-
-        # --------------------------------------------------------------------------------- #
-
-
         return tuple(outs)

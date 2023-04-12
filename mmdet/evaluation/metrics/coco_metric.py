@@ -504,12 +504,17 @@ class CocoMetric(BaseMetric):
 
                 for item in metric_items:
                     val = float(
-                        f'{coco_eval.stats[coco_metric_names[item]]:.3f}')
+                        f'{coco_eval.stats[coco_metric_names[item]]:.4f}')
                     eval_results[item] = val
             else:
                 coco_eval.evaluate()
                 coco_eval.accumulate()
                 coco_eval.summarize()
+
+                # ------------------------------- 绘制 PR 曲线时打开 -------------------------------- #
+                # p = coco_eval.eval["precision"]
+                # PR(p)
+
                 if self.classwise:  # Compute per-category AP
                     # Compute per-category AP
                     # from https://github.com/facebookresearch/detectron2/
@@ -529,8 +534,8 @@ class CocoMetric(BaseMetric):
                         else:
                             ap = float('nan')
                         results_per_category.append(
-                            (f'{nm["name"]}', f'{round(ap, 3)}'))
-                        eval_results[f'{nm["name"]}_precision'] = round(ap, 3)
+                            (f'{nm["name"]}', f'{round(ap, 4)}'))
+                        eval_results[f'{nm["name"]}_precision'] = round(ap, 4)
 
                     num_columns = min(6, len(results_per_category) * 2)
                     results_flatten = list(
@@ -553,13 +558,46 @@ class CocoMetric(BaseMetric):
                 for metric_item in metric_items:
                     key = f'{metric}_{metric_item}'
                     val = coco_eval.stats[coco_metric_names[metric_item]]
-                    eval_results[key] = float(f'{round(val, 3)}')
+                    eval_results[key] = float(f'{round(val, 4)}')
 
                 ap = coco_eval.stats[:6]
-                logger.info(f'{metric}_mAP_copypaste: {ap[0]:.3f} '
-                            f'{ap[1]:.3f} {ap[2]:.3f} {ap[3]:.3f} '
-                            f'{ap[4]:.3f} {ap[5]:.3f}')
+                logger.info(f'{metric}_mAP_copypaste: {ap[0]:.4f} '
+                            f'{ap[1]:.4f} {ap[2]:.4f} {ap[3]:.4f} '
+                            f'{ap[4]:.4f} {ap[5]:.4f}')
 
         if tmp_dir is not None:
             tmp_dir.cleanup()
         return eval_results
+
+def PR(precisions, thr=0.75):
+
+    print(precisions.shape)
+
+    import pandas as pd
+    out = 'E:/lrk/trail/logs/SAR/SSDD/PR_curve/PAFPN.xlsx'
+
+    """Export PR Excel data
+
+        Args:
+            config_file (list[list | tuple]): config file path.
+            result_file (str): pkl file of testing results path.
+            out (str): path of excel file
+            thr(float): output PR Threshold. Optional range: {-1, [0.5, 0.95]}
+                If thr == -1: Threshold is 0.5-0.95
+    """
+
+    recall = np.mat(np.arange(0.0, 1.01, 0.01)).T
+
+    if thr == -1:
+        mAP_all_pr = np.mean(precisions[:, :, :, 0, 2], axis=0)
+    else:
+        T = int((thr - 0.5) / 0.05)
+        mAP_all_pr = precisions[T, :, :, 0, 2]
+
+    # data = np.hstack((np.hstack((recall, mAP_all_pr)), np.mat(np.mean(mAP_all_pr, axis=1)).T))
+    data = np.hstack((recall, mAP_all_pr))
+
+    df = pd.DataFrame(data)
+
+    df.to_excel(out, index=False)
+

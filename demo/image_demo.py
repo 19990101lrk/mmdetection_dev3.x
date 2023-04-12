@@ -32,15 +32,19 @@ from mmdet.apis import DetInferencer
 def parse_args():
     parser = ArgumentParser()
     parser.add_argument(
-        'inputs', type=str, help='Input image file or folder path.')
+        '--inputs',
+        default='E:/lrk/trail/datasets/SSDD/test/all/images/000739.png',
+        type=str, help='Input image file or folder path.')
     parser.add_argument(
-        'model',
+        '--model',
+        # default='../../../logs/SAR/SSDD/modify/fcos_r50_fpn_gn-head_50e_ssdd_all_v1/fcos_r50_fpn_gn-head_50e_ssdd_all.py',
+        default='../../../logs/SAR/SSDD/baseline_hbb/fcos_hbox_r50_fpn_50e_ssdd/fcos_r50_fpn_50e_ssdd.py',
         type=str,
         help='Config or checkpoint .pth file or the model name '
         'and alias defined in metafile. The model configuration '
         'file will try to read from .pth if the parameter is '
         'a .pth weights file.')
-    parser.add_argument('--weights', default=None, help='Checkpoint file')
+    parser.add_argument('--weights', default='../../../logs/SAR/SSDD/baseline_hbb/fcos_hbox_r50_fpn_50e_ssdd/epoch_50.pth', help='Checkpoint file')
     parser.add_argument(
         '--out-dir',
         type=str,

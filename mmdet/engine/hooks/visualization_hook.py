@@ -57,7 +57,8 @@ class DetVisualizationHook(Hook):
         self._visualizer: Visualizer = Visualizer.get_current_instance()
         self.interval = interval
         self.score_thr = score_thr
-        self.show = show
+        # self.show = show
+        self.show = False
         if self.show:
             # No need to think about vis backends.
             self._visualizer._vis_backends = {}
