@@ -44,7 +44,10 @@ def parse_args():
         'and alias defined in metafile. The model configuration '
         'file will try to read from .pth if the parameter is '
         'a .pth weights file.')
-    parser.add_argument('--weights', default='../../../logs/SAR/SSDD/baseline_hbb/fcos_hbox_r50_fpn_50e_ssdd/epoch_50.pth', help='Checkpoint file')
+    parser.add_argument('--weights',
+                        # default='../../../logs/SAR/SSDD/modify/fcos_r50_fpn_gn-head_50e_ssdd_all_v1/epoch_50.pth',
+                        default='../../../logs/SAR/SSDD/baseline_hbb/fcos_hbox_r50_fpn_50e_ssdd/epoch_50.pth',
+                        help='Checkpoint file')
     parser.add_argument(
         '--out-dir',
         type=str,

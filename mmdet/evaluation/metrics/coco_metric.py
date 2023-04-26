@@ -569,12 +569,12 @@ class CocoMetric(BaseMetric):
             tmp_dir.cleanup()
         return eval_results
 
-def PR(precisions, thr=0.75):
+def PR(precisions, thr=-1):
 
     print(precisions.shape)
 
     import pandas as pd
-    out = 'E:/lrk/trail/logs/SAR/SSDD/PR_curve/PAFPN.xlsx'
+    out = 'E:/lrk/trail/logs/SAR/SSDD/PR_curve/ablation/Baseline+WGF+SFE+CIOULoss.xlsx'
 
     """Export PR Excel data
 

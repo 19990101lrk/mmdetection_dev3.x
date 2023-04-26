@@ -10,9 +10,9 @@ all_recalls = []
 all_precisions = []
 file_names=[]
 
-path = 'E:/lrk/trail/logs/SAR/SSDD/PR_curve/FPN/'
+path = 'E:/lrk/trail/logs/SAR/HRSID/PR_curve/'
 
-files = os.listdir(path)
+files = sorted(os.listdir(path), reverse=True)
 dfs = []
 for file in files:
     if file.endswith('.xlsx'):
@@ -41,9 +41,9 @@ ax.set_xlabel('Recall')
 ax.set_ylabel('Precision')
 ax.set_title('PR Curve')
 ax.legend()  # 添加图例
-plt.xlim(0.0,0.8)
-plt.ylim(0.01,0.99)
-plt.savefig(path + 'img/SSDD_Compare.svg', format='svg', dpi=600, bbox_inches='tight')
+plt.xlim(0.0,0.7)
+plt.ylim(0.01,1.0)
+plt.savefig(path + 'img/HRSID_Compare.svg', format='svg', dpi=400, bbox_inches='tight')
 plt.show()
 
 
